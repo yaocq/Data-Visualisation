@@ -1,0 +1,405 @@
+<!DOCTYPE html>
+<html>
+<head>
+	<meta charset="utf-8">
+	<title>YAO's scotter plot</title>
+	<script type="text/javascript" src="d3.js"></script>
+	<style type="text/css">
+		.hoverLegend {
+			font-family: calibri light;
+			font-size: 12pt;
+		}
+
+		h1 {
+			font-family: calibri;
+			font-size: 36pt;
+			text-align: center;
+		}
+
+		p {
+			font-family: calibri;
+			font-size: 12pt;
+			text-align: center;
+		}
+
+		select {
+			text-align: center;
+		}
+
+	</style>
+</head>
+
+<body>
+	<!--2.确定横纵轴：创建下拉菜单；将所选值赋给全局变量-->
+	<div style="width: 800px;">
+		<h1>Scatter plot</h1>
+		<div id="svgdiv"></div>
+		<div id="chooseLine" style="margin: 0px auto; width: 250px;">
+			<!--2.3按要求放置下拉菜单-->
+			<p style="margin-bottom: 3px;">You could decide axes here</p>
+			<p style="display: inline;">x:</p>
+			<select style="display: inline;" id="hname">
+				<option>sepal width</option>
+				<option>sepal length</option>
+				<option>petal length</option>
+				<option>petal width</option>
+			</select>
+			<p style="display: inline;">y:</p>
+			<select style="display: inline;" id="vname">
+				<option>sepal length</option>
+				<option>sepal width</option>
+				<option>petal length</option>
+				<option>petal width</option>
+			</select>
+			<p style="margin-bottom: 3px;">You could reset the graph here</p>
+			<div style="margin: 0px auto;width: 55px">
+				<button>Reset</button>
+			</div>
+	</div>
+
+	<script type="text/javascript">
+		//一、设置全局变量
+		//2.1设置横纵轴的内容变量及初值
+		var xOption = "sepal width";
+		var yOPtion = "sepal length";
+		var horizontal_axis = xOption;
+		var vertical_axis = yOPtion;
+
+		//7.2设置原始坐标数组
+		var ycoordinate = [];
+		var xcoordinate = [];
+
+		//3.1定义图表的长宽和向内余量
+		var w = 800
+		var h = 450
+		var padding = 20
+
+		//3.2创建画布
+		var svg = d3.select("#svgdiv")
+					.append("svg")
+					.attr("width",w)
+					.attr("height",h);
+
+		//7.缩放
+		//7.1为可缩放的元素创建一个group
+		var scaleableGroup = svg.append("g")
+						.attr("id","scaleable");
+
+		//7.4创建感应缩放功能用的不可见方形
+		scaleableGroup.append("rect")
+						.attr("x", -w/2)
+						.attr("y", -h/2)
+						.attr("width", w*2)
+						.attr("height", h*2)
+						.attr("opacity", 0);
+
+		//5.3设置图例字体大小的全局变量
+		var sizeFont = 13;
+
+		//二、打开页面，选择下拉菜单以及缩放这三个动作下散点图的创建
+		//1.导入数据
+		//如何在d3.csv()外部调用数据？？？？？？？？全局变量不管用的？？？？？？？？？？？？
+		var dataset = []; 
+		d3.csv("flowers.csv", function(data) {
+			dataset = data;
+
+			//7.5将可缩放对象和zoom行为绑定
+			var zoom = d3.zoom() //js允许既是对象，也是函数的东西。。。。。真的醉
+						.on("zoom",zoom_scatter)
+
+			//7.7将button和setup功能绑定
+			d3.select("button")
+				.on("click",setup);
+
+			//初始化图象
+			setup();
+			//右上角的图例是不随缩放和下拉菜单的改变而改变的
+			drawStableLegend();
+
+			//2.2在下拉菜单选择之后改变散点图
+			//改变横纵轴会改变x和y方向上的原始坐标，进而改变x和y方向上的scale
+			d3.selectAll("select")
+				.on("click", function() {
+
+					//重置transform
+					d3.selectAll("#scaleable")
+						.attr("transform", null)
+
+					//获取更新后的坐标轴名
+					var myselect = document.getElementById(this.id);
+					var index = myselect.selectedIndex;
+					console.log(this.id,index);
+
+					//更新坐标轴名
+					if (this.id == "hname") {
+						xOption = myselect.options[index].text;
+					}
+					else {
+						yOPtion = myselect.options[index].text;
+					}
+
+					setup();
+				});
+
+			//三、定义创建图表时反复用到的功能
+			//初始化所有与csv相关的变量
+			function setup(){
+				horizontal_axis = xOption;
+				vertical_axis = yOPtion;
+
+				//更新坐标轴方向上的数据
+				xcoordinate = [];
+				ycoordinate = [];
+				for(var d in dataset){
+					xcoordinate.push(dataset[d][horizontal_axis]);
+					ycoordinate.push(dataset[d][vertical_axis]);
+				};
+
+				//更新横轴缩放比
+				xscale = d3.scaleLinear()
+							.domain([d3.min(xcoordinate),d3.max(xcoordinate)])
+							.range([padding+10,w-padding])
+							.nice();
+				yscale = d3.scaleLinear()
+							.domain([d3.min(ycoordinate),d3.max(ycoordinate)])
+							.range([h-padding,padding])
+							.nice();
+
+				//重新画图
+				draw_scatter();
+
+				//重新创建tooltip
+				//因为每一次换横纵轴的时候原来的圆点都会被移除
+				popupTooltip();
+
+				//让k值重新开始计算
+				d3.selectAll("#scaleable")
+					.call(zoom)
+					.call(zoom.transform, d3.zoomIdentity);
+			}
+
+			//根据花的种类返回颜色
+			function getColour(specie){
+				if (specie == "setosa") {
+					return "blue";
+				}
+				else {
+					if (specie == "versicolor"){
+						return "orange";
+					}
+					else {
+						return "green";
+					}
+				}
+			}
+
+			//5.创建图例和坐标轴名称
+			function drawStableLegend(){
+
+				//5.1创建图例
+				var species = ["setosa","versicolor","virginica"]
+				var interval = 20
+				var legends = svg.selectAll("legend")
+								//.classed("legend")
+								.data(species)
+								.enter()
+								.append("g")
+								.attr("transform",function(d,i){return "translate("+(w-padding)+","+(padding+i*interval)+")";});
+
+				legends.append("rect")
+						.attr("x", -interval)
+						.attr("y", 0)
+						.attr("width", interval-2.5)
+						.attr("height", interval-2.5)
+						.data(species)
+						.attr("fill", function(d){
+							return getColour(d);
+						});
+
+				legends.append("text")
+						.attr("font-size", sizeFont)
+						.attr("font-family","calibri")
+						.attr("x", -interval-2.5)
+						.attr("y", sizeFont)
+						.data(species)
+						.attr("text-anchor","end")
+						.text(function (d){ return d;});
+			}
+
+			//4.创建新的坐标轴
+			function drawAxisAndLegend(){
+				var xAxis = d3.axisBottom(xscale);
+				var yAxis = d3.axisLeft(yscale);
+
+				svg.append("g")
+					.attr("class","axis")
+					.attr("id","haxis")
+					.call(xAxis)
+					.attr("transform", "translate(0,"+(h-padding)+")");
+
+				svg.append("g")
+					.attr("class","axis")
+					.attr("id","vaxis")
+					.call(yAxis)
+					.attr("transform", "translate("+(padding+10)+",0)");
+
+				//5.3创建坐标轴名称
+				svg.append("text")
+					.attr("class","textAxis")
+					.text(horizontal_axis+" (cm)")
+					.attr("font-size", sizeFont)
+					.attr("font-family","calibri")
+					.attr("text-anchor","end")
+					.attr("transform", "translate("+(w-padding)+","+(h-padding)+")")
+					.attr("dy","-0.5em");
+
+				svg.append("text")
+					.attr("class","textAxis")
+					.text(vertical_axis+" (cm)")
+					.attr("font-size", sizeFont)
+					.attr("font-family","calibri")
+					.attr("transform","rotate(-90)")
+					.attr("text-anchor","end")
+					.attr("dy","3.5em")
+					.attr("dx","-1.5em");
+			}
+
+			//3.3创建散点图
+			function draw_scatter() {
+
+				//3.5删去原有圆点
+				//4.2删去原有坐标轴
+				//5.4删除原有坐标轴图例
+				d3.selectAll("circle").remove();
+				d3.selectAll(".axis").remove();
+				d3.selectAll(".textAxis").remove();
+
+				//3.6创建新的圆点
+				var circles = scaleableGroup.selectAll("circle")
+							.data(dataset)
+							.enter()
+							.append("circle")
+							.attr("cx", function(d, i){
+								return xscale(d[horizontal_axis]);
+							})
+							.attr("cy", function(d, i){
+								return yscale(d[vertical_axis]);
+							})
+							.attr("r", 3)
+							.attr("fill", function(d, i){
+								return getColour(d["species"]);
+							})
+							.attr("stroke","black")
+							.attr("stroke-width", 1);
+
+				//4创建新的坐标轴
+				drawAxisAndLegend();
+			}
+
+			//7.1创建缩放后的散点图
+			function zoom_scatter() {
+
+				//以防有tooltip在
+				d3.selectAll(".tooltip").remove();
+				d3.selectAll(".textAxis").remove();
+
+				//变换图片
+				factor = d3.event.transform;
+				d3.selectAll("#scaleable")
+					.attr("transform", factor.toString());
+				//console.log(d3.event.transform);
+
+				//计算新的缩放比
+				console.log(factor.k,[(padding+10)*factor.k,(w-padding)*factor.k])
+
+				xscale = d3.scaleLinear()
+							.domain([d3.min(xcoordinate),d3.max(xcoordinate)])
+							.range([(padding+10)*factor.k,(w-padding)*factor.k])
+							.nice();
+
+				yscale = d3.scaleLinear()
+							.domain([d3.min(ycoordinate),d3.max(ycoordinate)])
+							.range([(h-padding)*factor.k,padding*factor.k])
+							.nice();
+
+				//画新坐标轴
+				d3.selectAll(".axis").remove();
+				d3.selectAll(".textAxis").remove();
+				drawAxisAndLegend();
+
+				//移动坐标轴
+				//要放在画坐标之后
+				//因为画坐标的功能里自带了transform属性
+				//写在前面的话会被其重新覆盖
+				d3.select("#haxis")
+					.attr("transform","translate("+(factor.x)+","+(h-padding)+")")
+				d3.select("#vaxis")
+					.attr("transform","translate("+(padding+10)+","+factor.y+")")
+			}
+
+			//6.实现悬浮窗
+			function popupTooltip(){
+				d3.selectAll("circle")
+
+					//6.1鼠标悬停时
+					.on("mouseover", function(){
+						apoint = d3.select(this).property("__data__");
+
+						//加大圆点
+						d3.select(this)
+							.attr("r", 4)
+
+						//获取当前点的位置和对应的内容
+						var xPosition = parseFloat(d3.select(this).attr("cx"));
+						var yPosition = parseFloat(d3.select(this).attr("cy"));
+						var tips = new Array();
+							tips.push(horizontal_axis+": "+apoint[horizontal_axis]);
+							tips.push(vertical_axis+": "+apoint[vertical_axis]);
+							tips.push("specie: "+apoint["species"]);
+
+						//弹出框
+						//最右边的弹出框会有超出画布无法显示的问题
+						var rWidth = 120;
+						var rHeight	= 55;
+						
+						svg.append("rect")
+							.attr("class","tooltip")
+							.attr("x", xPosition+10)
+							.attr("y", yPosition)
+							.attr("width",rWidth)
+							.attr("height",rHeight)
+							.attr("rx", 4)
+							.attr("ry", 4)
+							.attr("fill","white")
+							.attr("stroke","gray")
+							.attr("fill-opacity",0.85)
+
+						//框里的字
+						var text = svg.append("text")
+							.attr("class","hoverLegend")
+							.attr("x", xPosition+15)
+							.attr("y", yPosition)
+
+						text.selectAll("tspan")
+							.data(tips)
+							.enter()
+							.append("tspan")
+							.text(function(d){
+								return d;
+							})
+							.attr("x",text.attr("x"))
+							.attr("dy","1em");
+						})
+
+						//6.2鼠标移开时
+					.on("mouseout", function(){
+							d3.select(this)
+								.attr("r",3)
+							d3.selectAll(".tooltip").remove();
+							d3.selectAll(".hoverLegend").remove();
+						});
+			}
+		});
+	</script>
+</body>
+</html>
